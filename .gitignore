@@ -1,0 +1,6 @@
+.cache
+build
+src/build
+build/xm1000
+src/build/xm1000
+src/log*
