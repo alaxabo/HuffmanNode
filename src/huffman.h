@@ -35,3 +35,8 @@ typedef struct HuffmanCode {
   struct HuffmanCode *next;
   struct HuffmanCode *last;
 } HuffmanCode;
+
+typedef struct PrevData {
+  uint16_t source;
+  uint16_t data;
+} PrevData;

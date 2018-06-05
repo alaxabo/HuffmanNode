@@ -19,13 +19,19 @@ implementation {
     return i;
   }
 
-  void toBinary(uint8_t *a)
+  void toBinary(uint8_t *a, uint8_t length)
   {
-    uint8_t i, j;
+    uint8_t i;
+    uint16_t j;
 
-    for(i = 0; i < 4; i++){
-      for(j=0x80;j!=0;j>>=1)
-        printf("%c",(a[i]&j)?'1':'0');
+    if (length <= 8){
+      j = 0x80;
+    } else if(length <= 16){
+      j = 0x8000;
+    }
+    for(i = 0; i < length; i++){
+      printf("%c",(a[i/8]&j)?'1':'0');
+      j >>= 1;
     }
 
     printf("\n");
@@ -281,8 +287,9 @@ implementation {
   command uint8_t * HuffmanTree.encode(int8_t *data, uint8_t length, TreeNode *root) {
     HuffmanCode * code = createCode();
     TreeNode * temp;
-    uint8_t preCode, preCodeLength, sufCodeLength, i;
+    uint8_t preCode, codeLength = 0, preCodeLength, sufCodeLength, i;
     int8_t sufCode;
+    uint8_t * encodeCode;
 
     for (i = 0; i < length; i++) {
       temp = call HuffmanNode.createNRM_TreeNode(data[i]);
@@ -301,15 +308,18 @@ implementation {
           reBalance(root);
       }
 
-      printf("preCode: %02x, length: %d\n", preCode, preCodeLength);
-      printf("sufCode: %02x, length: %d\n", sufCode, sufCodeLength);
       printfflush();
 
       addToCode(code, preCode, preCodeLength);
       addToCode(code, sufCode, sufCodeLength);
+      codeLength = preCodeLength + sufCodeLength;
     }
 
-    return convert(code);
+    encodeCode = convert(code);
+    toBinary(encodeCode, codeLength);
+    printf("Code size: %d bits\n", codeLength);
+    printfflush();
+    return encodeCode;
   }
 
   command int8_t * HuffmanTree.decode(uint8_t *code, TreeNode *root) {

@@ -7,7 +7,7 @@
 #include "printf.h"
 #endif
 
-// 
+//
 #define RESYNC_THRESHOLD 5
 // Minimum inactive slots to enter power saving
 #define SLEEP_SLOTS_THRESHOLD 1
@@ -37,30 +37,30 @@ module TDMALinkP{
 	uses {
 		// Scheduler
 		interface SlotScheduler;
-		
+
 		// General radio
 		interface AMPacket;
 		interface SplitControl as RadioControl;
-		
+
 		// Time sync with system
 		interface TimeSyncAMSend<T32khz, uint32_t> as TSSend;
 		interface Receive as TSReceiver;
 		interface TimeSyncPacket<T32khz, uint32_t> as TSPacket;
-		
+
 		// Send and receive Join Req
 		interface AMSend as JoinReqSend;
 		interface Receive as JoinReqRecv;
-		interface AMSend as JoinAnsSend; 
+		interface AMSend as JoinAnsSend;
 		interface Receive as JoinAnsRecv;
-		
+
 		// Data send and recv
 		interface AMSend as DataSend;
 		interface Receive as DataRecv;
-		
+
 		// Random the send time to avoid collision
 		interface Random as JoinReqRandom;
 		interface Timer<T32khz> as JoinReqDelayTimer;
-		
+
 		// DEBUG
 		interface Leds;
 
@@ -85,7 +85,7 @@ implementation{
 	am_addr_t allocated_slots[MAX_SLAVES];
 	uint8_t next_free_slot_pos = 0;
 	bool data_ready = FALSE;
-	
+
 	message_t sync_packet;
 	SyncMsg *sync_msg;
 	message_t join_req_packet;
@@ -96,34 +96,28 @@ implementation{
 	DataMsg *data_msg;
 
 	//Huffman
-	uint16_t prev_data = 0;
+	PrevData *prev_data[MAX_SLAVES];
+	uint8_t last_slot = 0;
+	//uint16_t prev_data = 0;
 	uint8_t resetTreecount = 0;
-	  TreeNode *root = NULL;
-	  TreeNode *root2 = NULL;
+  TreeNode *root = NULL;
+  TreeNode *root2 = NULL;
 
-	  size_t strlen1(const char *s) {
-	    size_t i = 0;
-	    printf("%s\n", s);
-	    for (i = 0; s[i] != '\0'; i++) ;
-	    if(i == 0) return 1;
-	    return i;
-	  }
+  void toBinary(uint8_t *a)
+  {
+    uint8_t i, j;
 
-	  void toBinary(uint8_t *a)
-	  {
-	    uint8_t i, j;
+    for(i = 0; i < 4; i++){
+      for(j=0x80;j!=0;j>>=1)
+        printf("%c",(a[i]&j)?'1':'0');
+    }
 
-	    for(i = 0; i < 4; i++){
-	      for(j=0x80;j!=0;j>>=1)
-	        printf("%c",(a[i]&j)?'1':'0');
-	    }
-
-	    printf("\n");
-	    printfflush();
-	  }
+    printf("\n");
+    printfflush();
+  }
 
 	//End Huffman
-	
+
 #pragma mark - Define all functions here
 	void sendSyncBeacon();
 	void startSlotTask();
@@ -138,28 +132,28 @@ implementation{
 		printf("[DEBUG] Radio On\n");
 		printfflush();
 		#endif
-		
+
 		//Check if radio was turned on by slot scheduler
 		if(call SlotScheduler.isRunning())
 			startSlotTask();
-		
+
 		//FOR CONTROL INTERFACE: Signal that master is ready only when radio is on for the first time
 		if(TOS_NODE_ID == head_addr && is_started == FALSE) {
 				is_started = TRUE;
 				signal TDMAProtocol.startDone(SUCCESS, TRUE);
 		}
 	}
-	
+
 	command bool TDMAProtocol.isRunning() {
 		return is_started;
 	}
-	
+
 	command void TDMAProtocol.stop(){
 		// This is so powerful that will shut everything down
 		call SlotScheduler.stop();
 		call RadioControl.stop();
 	}
-	
+
 	event void RadioControl.stopDone(error_t error){
 		if(error != SUCCESS && error != EALREADY)
 			call RadioControl.stop();
@@ -172,7 +166,7 @@ implementation{
 		if (!is_started)
 			signal TDMAProtocol.stopDone(SUCCESS);
 	}
-	
+
 	command error_t TDMAProtocol.start(uint32_t system_time, uint8_t slot_id) {
 		data_msg = (DataMsg *) call DataSend.getPayload(&data_packet, sizeof(DataMsg));
 		if(TOS_NODE_ID == 0x0000) {
@@ -194,7 +188,7 @@ implementation{
 		}
 		return SUCCESS;
 	}
-	
+
 #pragma mark - Head
 	// These are for head
 	event void SlotScheduler.transmittingSlotStarted(uint8_t slot_id) {
@@ -212,7 +206,7 @@ implementation{
 			startSlotTask();
 		}
 	}
-	
+
 	void startSlotTask() {
 		//At this point it is guaranteed that the radio is already on
 		uint8_t slot = call SlotScheduler.getScheduledSlot();
@@ -245,7 +239,7 @@ implementation{
 		else
 			sendData(data_msg);
 	}
-	
+
 	uint8_t getNextMasterSlot(uint8_t slot) {
 		//Listen for join requests
 		if(slot == SYNC_SLOT)
@@ -258,7 +252,7 @@ implementation{
 		//No more allocated data slots to listen to, schedule for next epoch sync beaconing
 		return SYNC_SLOT;
 	}
-	
+
 	uint8_t getNextSlaveSlot(uint8_t slot) {
 		if(slot == SYNC_SLOT && sync_received == FALSE) {
 			missed_sync_count++;
@@ -312,18 +306,18 @@ implementation{
 			return SYNC_SLOT;
 		}
 	}
-	
+
 	event uint8_t SlotScheduler.transmittingSlotEnded(uint8_t slot) {
 		uint8_t nextSlot;
 		uint8_t inactivePeriod;
-		
+
 		#ifdef DEBUG_1
 		printf("[DEBUG] Slot %d ended\n", slot);
 		printfflush();
 		#endif
 
 		nextSlot = (TOS_NODE_ID == 0x0000) ? getNextMasterSlot(slot) : getNextSlaveSlot(slot);
-		
+
 		//In sync mode the radio is always on and scheduler is not running
 		if(sync_mode) {
 			#ifdef DEBUG_1
@@ -357,14 +351,14 @@ implementation{
 
 		return nextSlot;
 	}
-	
+
 	event void TSSend.sendDone(message_t *msg, error_t error){
 		#ifdef DEBUG_1
 		printf("[DEBUG] Time sync packet sent!\n");
 		printfflush();
 		#endif
 	}
-	
+
 	event message_t * TSReceiver.receive(message_t *msg, void *payload, uint8_t len){
 		uint32_t ref_time;
 		#ifdef DEBUG_1
@@ -403,7 +397,7 @@ implementation{
 			}
 			#ifdef DEBUG_1
 			printf("[DEBUG] Local scheduler started and synchronized with master scheduler\n");
-			printf("[DEBUG] Entering SLOTTED MODE\n");	
+			printf("[DEBUG] Entering SLOTTED MODE\n");
 			printfflush();
 			#endif
 		} else {
@@ -420,7 +414,7 @@ implementation{
 
 		return msg;
 	}
-	
+
 	uint8_t allocateSlot(am_addr_t slave) {
 		uint8_t slot;
 		//Check if slot was already allocated to the slave
@@ -435,7 +429,7 @@ implementation{
 		allocated_slots[next_free_slot_pos] = slave;
 		return (next_free_slot_pos++) + 2;
 	}
-	
+
 	void sendJoinAnswer(am_addr_t slave, uint8_t slot) {
 		join_ans_msg->slot = slot;
 		#ifdef DEBUG_1
@@ -469,7 +463,7 @@ implementation{
 			printfflush();
 			#endif
 		}
-		
+
 		return msg;
 	}
 
@@ -482,7 +476,7 @@ implementation{
 		#endif
 	}
 
-#pragma mark - Member	
+#pragma mark - Member
 	// These are for member
 	event void JoinReqSend.sendDone(message_t *msg, error_t error){
 		#ifdef DEBUG_1
@@ -505,7 +499,7 @@ implementation{
 		printf("[DEBUG] Join completed to slot %u\n", assigned_slot);
 		printfflush();
 		#endif
-		
+
 		has_joined = TRUE;
 
 		//FOR CONTROL INTERFACE: Signal that slave is ready
@@ -521,7 +515,7 @@ implementation{
 		printf("[DEBUG] Sending data at slot %d\n", call SlotScheduler.getScheduledSlot());
 		printfflush();
 		#endif
-		
+
 		if(call DataSend.send(head_addr, &data_packet, sizeof(DataMsg)) == SUCCESS)
 			return SUCCESS;
 		else
@@ -531,7 +525,7 @@ implementation{
 	command uint8_t TDMAProtocol.getCurrentSlot(){
 		return call SlotScheduler.getScheduledSlot();
 	}
-	
+
 	void sendSyncBeacon() {
 		uint8_t status;
 		sync_msg = (SyncMsg *) call TSSend.getPayload(&sync_packet, sizeof(SyncMsg));
@@ -545,13 +539,13 @@ implementation{
 		printfflush();
 		#endif
 	}
-	
+
 	void sendJoinRequest() {
 		// Doing Random delay before send to avoid collision
 		uint32_t delay = call JoinReqRandom.rand16() % (SLOT_DURATION / 2);
 		call JoinReqDelayTimer.startOneShot(delay);
 	}
-	
+
 	event void JoinReqDelayTimer.fired(){
 		// Delay done, sending data
 		#ifdef DEBUG_1
@@ -560,7 +554,7 @@ implementation{
 		#endif
 		call JoinReqSend.send(head_addr, &join_req_packet, sizeof(JoinReqMsg));
 	}
-	
+
 	#ifdef DEBUG_DEBUG
 	uint8_t round = 0;
 	#endif
@@ -573,7 +567,7 @@ implementation{
 		printf("[INFO] Missed TimeSync: %d\n", missed_sync_count);
 		if(TOS_NODE_ID == 0x0000) {
 			i = round * 5;
-			max_slot = (round + 1) * 5; 
+			max_slot = (round + 1) * 5;
 			printf("========================\n");
 			printf("[INFO] Slots table:\n");
 			for(; i < max_slot; i++) {
@@ -617,103 +611,80 @@ implementation{
 		#endif
 
 		uint8_t *code, i;
-	    int8_t *dataArray;
-	    int16_t sub = 0;
-	    int32_t tmp;
-	    int8_t tempArray[1];
-	    uint16_t data;
-		
-		data = data_msg->temperature;
-		data_msg = (DataMsg *) payload;
-		// TODO DEBUG data received
-		#ifdef DEBUG_NOW
-		printf("[DATA] Receive data from 0x%04x\n", call AMPacket.source(msg));
-		// printfflush();
-		// #endif
-		// #ifdef DEBUG_DATA
-		printf("=====================\n");
-		printf("[DATA] Source: 0x%04x\n", call AMPacket.source(msg));
-		// printf("[DATA] Destination: 0x%04x\n", call AMPacket.destination(msg));
-		// printf("[DATA] msg->vref: 0x%04x\n", data_msg->vref);
-		//printf("[DATA] msg->temp: 0x%04x\n", data_msg->temperature);
-		//printf("[DATA] msg->temp: %d\n", data_msg->temperature);
-		// printf("[DATA] msg->temp: %u\n", convertHexToDemi(data_msg->temperature));
-		printf("[DATA] msg->temp: ");
-		printfFloat(-39.6 + 0.01 * data);
-		//testHuffman();
+    int8_t *dataArray;
+    int16_t sub = 0;
+    int32_t tmp;
+    int8_t tempArray[1];
+    uint16_t data, source;
+    PrevData * prev;
 
-		//call event Huffman
-		//tmp = data - prev, assign tmp to a data array, change if node >= 3
-		//encode and decode data array
+    source = call AMPacket.source(msg);
+		data_msg = (DataMsg *) payload;
+		data = data_msg->temperature;
+
+		printf("Receive data from node 0x%04x\n", source);
+		printf("[DATA] Temperature: ");
+		printfFloat(-39.6 + 0.01 * data);
+		printf("\n");
+		printfflush();
 
 		if (root == NULL){
-	      root = call HuffmanTree.createEmptyTree();
-	    } 
-	    if (root2 == NULL){
-	      root2 = call HuffmanTree.createEmptyTree();
-	    }
+      root = call HuffmanTree.createEmptyTree();
+    }
+    if (root2 == NULL){
+      root2 = call HuffmanTree.createEmptyTree();
+    }
 
-	    if (prev_data == 0){
-	      sub = 0;
-	      tmp = 0;
-	      prev_data = data;
-	    } else {
-	      sub = data - prev_data;
-	      tmp = sub / 10;
-	    }
+		for (i = 0; i <= last_slot; i++){
+			if (i == last_slot){
+				prev = malloc(sizeof(PrevData));
+				prev->source = source;
+				prev->data = data;
+				prev_data[last_slot] = prev;
+				last_slot++;
+				break;
+			} else {
+				if (prev_data[i]->source = source){
+					sub = data - prev_data[i]->data;
+	      	tmp = sub / 10;
 
-	    printf("sub: "); printfFloat(0.01*sub);
-	    printf("data: "); printfFloat(-39.6 + 0.01*data);
-	    printf("prev: "); printfFloat(-39.6 + 0.01*prev_data);
-	    printf("tmp: %d\n", (int8_t)tmp);
-	    printfflush();
+					printf("Previous temperature: ");
+					printfFloat(-39.6 + 0.01 * prev_data[i]->data);
+					printf("Sub: ");
+					printfFloat(0.01*sub);
+					printf("Sub round: %d\n", tmp);
+					printf("Begin Compression: \n");
+					printfflush();
 
-	    tempArray[0] = (int8_t)tmp;
+					tempArray[0] = (int8_t)tmp;
 
-	    code = call HuffmanTree.encode(tempArray, 1, root);
-
-	    //printf("code %ld\n ", strlen(code));
-	    printf("Begin Compression: \n");
-	    printfflush();
-	    toBinary(code);
-	    printfflush();
-
-	    dataArray = call HuffmanTree.decode(code, root2);
-
-
-	    for(i = 0; i < 1; i++){
-	      printf("%d ", dataArray[0]);
-	    }
-	    printfflush();
-	    printf("\n\n");
-	    printfflush();
-	    
-	    free(code);
-	    free(dataArray);
-
-	    printfflush();
-
-	    if(tmp >= 1 || tmp <= 1)
-	      prev_data = data;
-	  	// printf("Reset Tree Count: %d \n", resetTreecount);
-	  	resetTreecount++;
-	  	if (resetTreecount == 2000){
-	  		root = NULL;
-	  		root2 = NULL;
-	  		free(root);
-	  		free(root2);
-	  		// printf("Reset Tree\n");
-	  	}
-
-		// printf("[DATA] msg->humi: 0x%04x\n", data_msg->humidity);
-		// printf("[DATA] msg->phot: 0x%04x\n", data_msg->photo);
-		// printf("[DATA] msg->radi: 0x%04x\n", data_msg->radiation);
-		printf("Compression Completed!\n=====================\n");
-		printfflush();
-		#endif
+					printf("Compression Huffman code: ");
+			    code = call HuffmanTree.encode(tempArray, 1, root);
 
 
+			    //toBinary(code);
+			    printfflush();
 
+			    printf("Begin Decompression: \n");
+			    dataArray = call HuffmanTree.decode(code, root2);
+
+			    printf("Decompression result: %d\n", dataArray[0]);
+			    printfflush();
+			    printf("\n");
+			    printfflush();
+
+			    free(code);
+			    free(dataArray);
+
+			    printfflush();
+
+			    if(tmp >= 1 || tmp <= -1)
+			      prev_data[i]->data = data;
+
+					break;
+				}
+			}
+		}
 		return msg;
 	}
 
@@ -728,7 +699,7 @@ implementation{
 		data_msg->humidity = msg->humidity;
 		data_msg->photo = msg->photo;
 		data_msg->radiation = msg->radiation;
-		
+
 		return SUCCESS;
 	}
 
